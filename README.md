@@ -6,7 +6,7 @@ NAT Gatewayを定期的に削除、作成するLambda関数をデプロイする
 
 CloudFormationの画面から、「InstanceStartStop.yaml」をファイルアップロードしてデプロイする。下記パラメータを環境にあわせて指定する。
 あらかじめNAT Gatewayが設定されている環境で適用し、NAT Gatewayで使用しているElastic  IP、サブネットID、ルートテーブルをパラメータで指定する。
-NAT Gatewayやルートテーブルが複数ある場合は、JSONのリストを増やします。コード内にJSONサンプルがあるので、そちらを使用してください。
+NAT Gatewayやルートテーブルが複数ある場合は、JSONのリストを増やします。
 
 ※Elastic　IPは解放中にわずかに料金が発生します。
 https://aws.amazon.com/jp/ec2/pricing/on-demand/
