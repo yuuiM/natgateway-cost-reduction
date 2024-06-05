@@ -22,11 +22,11 @@ Metadata:
 Parameters:
   StartSchedule:
     Description: Start Datetime(UTC) format cron
-    Default: 10 7 ? * WED *
+    Default: 0 21 ? * SUN-THU *
     Type: String
   StopSchedule:
     Description: Stop Datetime(UTC) format cron
-    Default: 6 7 ? * WED *
+    Default: 0 15 ? * MON-FRI *
     Type: String
   # NAT Gatewayの設定
   NatGatewayConfigs:
@@ -34,30 +34,16 @@ Parameters:
     Type: String
     Default: '[
       {
-        "EipAllocId":"eipalloc-0585f5e867957c5ed",
-        "SubnetId":"subnet-025e48bcf54d2091b",
-        "RouteTableIds":["rtb-0f72e483829e9471d","rtb-0a00e5433c67b95b7"]
+        "EipAllocId":"eipalloc-xxxxxxxxxx",
+        "SubnetId":"subnet-xxxxxxxxxx",
+        "RouteTableIds":["rtb-xxxxxxxxxx","rtb-xxxxxxxxxx"]
       },
       {
-        "EipAllocId":"eipalloc-0b726b83618972cbc",
-        "SubnetId":"subnet-025e48bcf54d2091b",
-        "RouteTableIds":["rtb-044f1c50a58872dae"]
+        "EipAllocId":"eipalloc-xxxxxxxxxx",
+        "SubnetId":"subnet-xxxxxxxxxx",
+        "RouteTableIds":["rtb-xxxxxxxxxx"]
       }
     ]'
-
-
-# NAT Gatewayがいくつかある場合のサンプル
-# {
-#   "EipAllocId":"eipalloc-xxxxxxxxxxxxxxxx",
-#   "SubnetId":"subnet-xxxxxxxxxxxxxxxx",
-#   "RouteTableIds":["rtb-xxxxxxxxxxxxxxxx", "rtb-xxxxxxxxxxxxxxxx"]
-# },
-# {
-#   "EipAllocId":"eipalloc-xxxxxxxxxxxxxxxx",
-#   "SubnetId":"subnet-xxxxxxxxxxxxxxxx",
-#   "RouteTableIds":["rtb-xxxxxxxxxxxxxxxx"]
-# }
-
 
 #
 # Resources
