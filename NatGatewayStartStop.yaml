@@ -36,12 +36,14 @@ Parameters:
       {
         "EipAllocId":"eipalloc-xxxxxxxxxx",
         "SubnetId":"subnet-xxxxxxxxxx",
-        "RouteTableIds":["rtb-xxxxxxxxxx","rtb-xxxxxxxxxx"]
+        "RouteTableIds":["rtb-xxxxxxxxxx","rtb-xxxxxxxxxx"],
+        "Name":"MyNameIsNat1"
       },
       {
         "EipAllocId":"eipalloc-xxxxxxxxxx",
         "SubnetId":"subnet-xxxxxxxxxx",
-        "RouteTableIds":["rtb-xxxxxxxxxx"]
+        "RouteTableIds":["rtb-xxxxxxxxxx"],
+        "Name":"MyNameIsNat2"
       }
     ]'
 
@@ -156,35 +158,80 @@ Resources:
               except KeyError as e:
                   logger.info('本日%sは祝日ではありません。続行します。',today)
                   return False
+
+          def delete_old_routes(route_table_id):
+              try:
+                  response = ec2.describe_route_tables(RouteTableIds=[route_table_id])
+                  if not response['RouteTables']:
+                      logger.info(f"Route table {route_table_id} does not exist. Skipping.")
+                      return
+                  routes = response['RouteTables'][0]['Routes']
+                  for route in routes:
+                      if route.get('NatGatewayId'):
+                          logger.info(f"Deleting route: {route['DestinationCidrBlock']} in route table: {route_table_id}")
+                          ec2.delete_route(
+                              DestinationCidrBlock=route['DestinationCidrBlock'],
+                              RouteTableId=route_table_id
+                          )
+              except ec2.exceptions.ClientError as e:
+                  if e.response['Error']['Code'] == 'InvalidRouteTableID.NotFound':
+                      logger.error(f"Route table {route_table_id} does not exist. Skipping.")
+                  else:
+                      logger.error(f"Error deleting routes in route table {route_table_id}: {e}")
+
+          def create_nat_gateway(eip_alloc_id, subnet_id, name):
+              response = ec2.create_nat_gateway(AllocationId=eip_alloc_id, SubnetId=subnet_id)
+              logger.info(response)
+              natgw_id = response['NatGateway']['NatGatewayId']
+              logger.info('Waiting for creating NAT Gateway')
+              ec2.get_waiter('nat_gateway_available').wait(NatGatewayIds=[natgw_id])
+              logger.info('NAT Gateway is available')
+
+              # タグを設定
+              ec2.create_tags(Resources=[natgw_id], Tags=[{'Key': 'Name', 'Value': name}])
+              logger.info(f'Tagged NAT Gateway {natgw_id} with name {name}')
+
+              return natgw_id
+
+          def delete_nat_gateway(subnet_id):
+              filters = [{'Name': 'subnet-id', 'Values': [subnet_id]}, {'Name': 'state', 'Values': ['available']}]
+              response = ec2.describe_nat_gateways(Filters=filters)
+              if not response['NatGateways']:
+                  logger.info('No available NAT Gateway found to delete.')
+                  return None
+              natgw_id = response['NatGateways'][0]['NatGatewayId']
+              logger.info(ec2.delete_nat_gateway(NatGatewayId=natgw_id))
+              ec2.get_waiter('nat_gateway_deleted').wait(NatGatewayIds=[natgw_id])
+              return natgw_id
+
           def schedule_natgateway(event):
               for config in NAT_GATEWAY_CONFIGS:
                   eip_alloc_id = config['EipAllocId']
                   subnet_id = config['SubnetId']
                   route_table_ids = config['RouteTableIds']
+                  name = config.get('Name', 'NAT Gateway')  # デフォルト名を設定
                   
                   if any(r for r in event.get('resources') if 'StartScheduledRule' in r):
-                      logger.info('Create NAT Gateway')
-                      response = ec2.create_nat_gateway(AllocationId=eip_alloc_id, SubnetId=subnet_id)
-                      logger.info(response)
-                      natgw_id = response['NatGateway']['NatGatewayId']
-                      logger.info('Waiting for creating NAT Gateway')
-                      ec2.get_waiter('nat_gateway_available').wait(NatGatewayIds=[natgw_id])
-                      logger.info('NAT Gateway is available')
-                      
-                      for route_table_id in route_table_ids:
-                          logger.info('Change Route Table')
-                          logger.info(ec2.create_route(DestinationCidrBlock='0.0.0.0/0', NatGatewayId=natgw_id, RouteTableId=route_table_id))
+                      filters = [{'Name': 'subnet-id', 'Values': [subnet_id]}, {'Name': 'state', 'Values': ['available']}]
+                      existing_nats = ec2.describe_nat_gateways(Filters=filters).get('NatGateways', [])
+                      if not existing_nats:
+                          for route_table_id in route_table_ids:
+                              delete_old_routes(route_table_id)
+                          natgw_id = create_nat_gateway(eip_alloc_id, subnet_id, name)
+                          for route_table_id in route_table_ids:
+                              logger.info('Adding new route to Route Table')
+                              ec2.create_route(
+                                  DestinationCidrBlock='0.0.0.0/0',
+                                  NatGatewayId=natgw_id,
+                                  RouteTableId=route_table_id
+                              )
                   
                   elif any(r for r in event.get('resources') if 'StopScheduledRule' in r):
-                      logger.info('Delete NAT Gateway')
-                      filters = [{'Name': 'subnet-id', 'Values': [subnet_id]}, {'Name': 'state', 'Values': ['available']}]
-                      response = ec2.describe_nat_gateways(Filters=filters)
-                      natgw = response['NatGateways'][0]['NatGatewayId']
-                      logger.info(ec2.delete_nat_gateway(NatGatewayId=natgw))
-                      
-                      for route_table_id in route_table_ids:
-                          logger.info('Change Route Table')
-                          logger.info(ec2.delete_route(DestinationCidrBlock = '0.0.0.0/0', RouteTableId = route_table_id))
+                      natgw_id = delete_nat_gateway(subnet_id)
+                      if natgw_id:
+                          for route_table_id in route_table_ids:
+                              delete_old_routes(route_table_id)
+
           def lambda_handler(event, context):
               logger.info('Started')
               if not holiday_check():
