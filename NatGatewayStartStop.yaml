@@ -36,13 +36,13 @@ Parameters:
       {
         "EipAllocId":"eipalloc-xxxxxxxxxxxxxxxxx",
         "SubnetId":"subnet-xxxxxxxxxxxxxxxxx",
-        "RouteTableIds":["rtb-xxxxxxxxxxxxxxxxx","rtb-xxxxxxxxxxxxxxxxx"],
+        "RouteTableId":["rtb-xxxxxxxxxxxxxxxxx","rtb-xxxxxxxxxxxxxxxxx"],
         "Name":"MyNameIsNat1"
       },
       {
         "EipAllocId":"eipalloc-xxxxxxxxxxxxxxxxx",
         "SubnetId":"subnet-xxxxxxxxxxxxxxxxx",
-        "RouteTableIds":["rtb-xxxxxxxxxxxxxxxxx"],
+        "RouteTableId":["rtb-xxxxxxxxxxxxxxxxx"],
         "Name":"MyNameIsNat2"
       }
 
@@ -163,7 +163,7 @@ Resources:
 
           def delete_old_routes(route_table_id):
               try:
-                  response = ec2.describe_route_tables(RouteTableIds=[route_table_id])
+                  response = ec2.describe_route_tables(RouteTableId=[route_table_id])
                   if not response['RouteTables']:
                       logger.info(f"Route table {route_table_id} does not exist. Skipping.")
                       return
@@ -218,7 +218,7 @@ Resources:
               for config in NAT_GATEWAY_CONFIGS:
                   eip_alloc_id = config['EipAllocId']
                   subnet_id = config['SubnetId']
-                  route_table_ids = config['RouteTableIds']
+                  route_table_ids = config['RouteTableId']
                   name = config.get('Name', 'NAT Gateway')  # デフォルト名を設定
                   
                   if any(r for r in event.get('resources') if 'StartScheduledRule' in r):
