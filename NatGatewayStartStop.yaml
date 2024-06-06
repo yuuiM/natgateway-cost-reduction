@@ -6,15 +6,15 @@ Description: CloudFormation template for auto stop(delete) and start(create) mul
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
-    - Label:
-        default: CloudWatch Events Configuration
-      Parameters:
-      - StartSchedule
-      - StopSchedule
-    - Label:
-        default: VPC Configuration
-      Parameters:
-      - NatGatewayConfigs
+      - Label:
+          default: CloudWatch Events Configuration
+        Parameters:
+          - StartSchedule
+          - StopSchedule
+      - Label:
+          default: VPC Configuration
+        Parameters:
+          - NatGatewayConfigs
 
 #
 # Parameters
@@ -34,15 +34,18 @@ Parameters:
     Type: String
     Default: '[
       {
-        "EipAllocId":"eipalloc-xxxxxxxxxx",
-        "SubnetId":"subnet-xxxxxxxxxx",
-        "RouteTableIds":["rtb-xxxxxxxxxx","rtb-xxxxxxxxxx"]
+        "EipAllocId":"eipalloc-xxxxxxxxxxxxxxxxx",
+        "SubnetId":"subnet-xxxxxxxxxxxxxxxxx",
+        "RouteTableIds":["rtb-xxxxxxxxxxxxxxxxx","rtb-xxxxxxxxxxxxxxxxx"],
+        "Name":"MyNameIsNat1"
       },
       {
-        "EipAllocId":"eipalloc-xxxxxxxxxx",
-        "SubnetId":"subnet-xxxxxxxxxx",
-        "RouteTableIds":["rtb-xxxxxxxxxx"]
+        "EipAllocId":"eipalloc-xxxxxxxxxxxxxxxxx",
+        "SubnetId":"subnet-xxxxxxxxxxxxxxxxx",
+        "RouteTableIds":["rtb-xxxxxxxxxxxxxxxxx"],
+        "Name":"MyNameIsNat2"
       }
+
     ]'
 
 #
@@ -54,34 +57,35 @@ Resources:
     Properties:
       AssumeRolePolicyDocument:
         Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-            - lambda.amazonaws.com
-          Action:
-          - sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
       Path: "/"
       Policies:
-      - PolicyName: LambdaExecPolicy
-        PolicyDocument:
-          Statement:
-          - Sid: AccessToCWLog
-            Effect: Allow
-            Action:
-            - logs:CreateLogGroup
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-            Resource: "*"
-          - Sid: ChangeNatgwAndRouteTable
-            Effect: Allow
-            Action:
-            - ec2:CreateNatGateway
-            - ec2:DeleteNatGateway
-            - ec2:DescribeNatGateways
-            - ec2:CreateRoute
-            - ec2:DeleteRoute
-            - ec2:DescribeRouteTables
-            Resource: "*"
+        - PolicyName: LambdaExecPolicy
+          PolicyDocument:
+            Statement:
+              - Sid: AccessToCWLog
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Sid: ChangeNatgwAndRouteTable
+                Effect: Allow
+                Action:
+                  - ec2:CreateNatGateway
+                  - ec2:DeleteNatGateway
+                  - ec2:DescribeNatGateways
+                  - ec2:CreateRoute
+                  - ec2:DeleteRoute
+                  - ec2:DescribeRouteTables
+                  - ec2:CreateTags
+                Resource: "*"
   StartScheduledRule:
     Type: AWS::Events::Rule
     Properties:
@@ -89,8 +93,8 @@ Resources:
       ScheduleExpression: !Sub cron(${StartSchedule})
       State: ENABLED
       Targets:
-      - Arn: !GetAtt [ StateSchedulerFunction, Arn ]
-        Id: StateSchedulerFunction
+        - Arn: !GetAtt [StateSchedulerFunction, Arn]
+          Id: StateSchedulerFunction
   StopScheduledRule:
     Type: AWS::Events::Rule
     Properties:
@@ -98,22 +102,22 @@ Resources:
       ScheduleExpression: !Sub cron(${StopSchedule})
       State: ENABLED
       Targets:
-      - Arn: !GetAtt [ StateSchedulerFunction, Arn ]
-        Id: StateSchedulerFunction
+        - Arn: !GetAtt [StateSchedulerFunction, Arn]
+          Id: StateSchedulerFunction
   PermissionForStartEventsToInvokeLambda:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref StateSchedulerFunction
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt [ StartScheduledRule, Arn ]
+      SourceArn: !GetAtt [StartScheduledRule, Arn]
   PermissionForStopEventsToInvokeLambda:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref StateSchedulerFunction
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt [ StopScheduledRule, Arn ]
+      SourceArn: !GetAtt [StopScheduledRule, Arn]
   StateSchedulerFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -123,7 +127,7 @@ Resources:
       Description: Scheduled NAT Gateway stop and start.
       Handler: index.lambda_handler
       MemorySize: 128
-      Role: !GetAtt [ StateSchedulerExecRole, Arn ]
+      Role: !GetAtt [StateSchedulerExecRole, Arn]
       Runtime: python3.12
       Timeout: 300
       Code:
@@ -134,15 +138,15 @@ Resources:
           import urllib.request
           import json
           import datetime
-          
+
           logger = logging.getLogger(__name__)
           logger.setLevel(logging.INFO)
-          
+
           # 環境変数から情報取得
           NAT_GATEWAY_CONFIGS = json.loads(os.environ['NatGatewayConfigs'])
-          
+
           ec2 = boto3.client('ec2')
-          
+
           # 祝日チェック
           def holiday_check():
               today = (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime('%Y-%m-%d')
@@ -156,35 +160,89 @@ Resources:
               except KeyError as e:
                   logger.info('本日%sは祝日ではありません。続行します。',today)
                   return False
+
+          def delete_old_routes(route_table_id):
+              try:
+                  response = ec2.describe_route_tables(RouteTableIds=[route_table_id])
+                  if not response['RouteTables']:
+                      logger.info(f"Route table {route_table_id} does not exist. Skipping.")
+                      return
+                  routes = response['RouteTables'][0]['Routes']
+                  for route in routes:
+                      if route.get('NatGatewayId'):
+                          logger.info(f"Deleting route: {route['DestinationCidrBlock']} in route table: {route_table_id}")
+                          ec2.delete_route(
+                              DestinationCidrBlock=route['DestinationCidrBlock'],
+                              RouteTableId=route_table_id
+                          )
+              except ec2.exceptions.ClientError as e:
+                  if e.response['Error']['Code'] == 'InvalidRouteTableID.NotFound':
+                      logger.error(f"Route table {route_table_id} does not exist. Skipping.")
+                  else:
+                      logger.error(f"Error deleting routes in route table {route_table_id}: {e}")
+
+          def create_nat_gateway(eip_alloc_id, subnet_id, name):
+              try:
+                  response = ec2.create_nat_gateway(AllocationId=eip_alloc_id, SubnetId=subnet_id)
+                  logger.info(response)
+                  natgw_id = response['NatGateway']['NatGatewayId']
+                  logger.info('Waiting for creating NAT Gateway')
+                  ec2.get_waiter('nat_gateway_available').wait(NatGatewayIds=[natgw_id])
+                  logger.info('NAT Gateway is available')
+
+                  # タグを設定
+                  ec2.create_tags(Resources=[natgw_id], Tags=[{'Key': 'Name', 'Value': name}])
+                  logger.info(f'Tagged NAT Gateway {natgw_id} with name {name}')
+
+                  return natgw_id
+              except Exception as e:
+                  logger.error(f"Error creating NAT Gateway: {e}")
+                  return None
+
+          def delete_nat_gateway(subnet_id):
+              try:
+                  filters = [{'Name': 'subnet-id', 'Values': [subnet_id]}, {'Name': 'state', 'Values': ['available']}]
+                  response = ec2.describe_nat_gateways(Filters=filters)
+                  if not response['NatGateways']:
+                      logger.info('No available NAT Gateway found to delete.')
+                      return None
+                  natgw_id = response['NatGateways'][0]['NatGatewayId']
+                  logger.info(ec2.delete_nat_gateway(NatGatewayId=natgw_id))
+                  ec2.get_waiter('nat_gateway_deleted').wait(NatGatewayIds=[natgw_id])
+                  return natgw_id
+              except Exception as e:
+                  logger.error(f"Error deleting NAT Gateway: {e}")
+                  return None
+
           def schedule_natgateway(event):
               for config in NAT_GATEWAY_CONFIGS:
                   eip_alloc_id = config['EipAllocId']
                   subnet_id = config['SubnetId']
                   route_table_ids = config['RouteTableIds']
+                  name = config.get('Name', 'NAT Gateway')  # デフォルト名を設定
                   
                   if any(r for r in event.get('resources') if 'StartScheduledRule' in r):
-                      logger.info('Create NAT Gateway')
-                      response = ec2.create_nat_gateway(AllocationId=eip_alloc_id, SubnetId=subnet_id)
-                      logger.info(response)
-                      natgw_id = response['NatGateway']['NatGatewayId']
-                      logger.info('Waiting for creating NAT Gateway')
-                      ec2.get_waiter('nat_gateway_available').wait(NatGatewayIds=[natgw_id])
-                      logger.info('NAT Gateway is available')
-                      
-                      for route_table_id in route_table_ids:
-                          logger.info('Change Route Table')
-                          logger.info(ec2.create_route(DestinationCidrBlock='0.0.0.0/0', NatGatewayId=natgw_id, RouteTableId=route_table_id))
+                      filters = [{'Name': 'subnet-id', 'Values': [subnet_id]}, {'Name': 'state', 'Values': ['available']}]
+                      existing_nats = ec2.describe_nat_gateways(Filters=filters).get('NatGateways', [])
+                      if not existing_nats:
+                          for route_table_id in route_table_ids:
+                              delete_old_routes(route_table_id)
+                          natgw_id = create_nat_gateway(eip_alloc_id, subnet_id, name)
+                          if natgw_id:
+                              for route_table_id in route_table_ids:
+                                  logger.info('Adding new route to Route Table')
+                                  ec2.create_route(
+                                      DestinationCidrBlock='0.0.0.0/0',
+                                      NatGatewayId=natgw_id,
+                                      RouteTableId=route_table_id
+                                  )
                   
                   elif any(r for r in event.get('resources') if 'StopScheduledRule' in r):
-                      logger.info('Delete NAT Gateway')
-                      filters = [{'Name': 'subnet-id', 'Values': [subnet_id]}, {'Name': 'state', 'Values': ['available']}]
-                      response = ec2.describe_nat_gateways(Filters=filters)
-                      natgw = response['NatGateways'][0]['NatGatewayId']
-                      logger.info(ec2.delete_nat_gateway(NatGatewayId=natgw))
-                      
-                      for route_table_id in route_table_ids:
-                          logger.info('Change Route Table')
-                          logger.info(ec2.delete_route(DestinationCidrBlock = '0.0.0.0/0', RouteTableId = route_table_id))
+                      natgw_id = delete_nat_gateway(subnet_id)
+                      if natgw_id:
+                          for route_table_id in route_table_ids:
+                              delete_old_routes(route_table_id)
+
           def lambda_handler(event, context):
               logger.info('Started')
               if not holiday_check():
